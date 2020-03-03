@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <pwd.h>
 
 #define MAX_INPUT_SIZE 10000
 #define MAX_ARGS       1000
@@ -32,6 +33,23 @@ char* get_text(char input[], int input_length, int *in){
 	ret[text_length] = '\0';
 
 	return ret;
+}
+
+void cd(char* path){
+	// cd `dir` defaults to $HOME
+	if(path == NULL){
+		if((path = getenv("HOME")) == NULL){
+			path = getpwuid(getuid()) -> pw_dir;
+		}
+	}
+
+	// change working directory
+	chdir(path);
+
+	// change $PWD
+	char *new_p = getcwd(NULL,0);
+	setenv("PWD", new_p, 1);
+	free(new_p);
 }
 
 int main (void){
@@ -198,7 +216,16 @@ int main (void){
 			args[args_no] = NULL;
 
 			// `exit`
-			if(strcmp(args[0], "exit") == 0) exit(EXIT_SUCCESS);
+			if(! strcmp(args[0], "exit")) exit(EXIT_SUCCESS);
+
+			if(! strcmp(args[0], "cd")){
+				if(args_no>2){
+					write(2, "ERROR, culprit = `cd` has atmost one argument.\n", 47);
+					ERROR;
+				}
+				cd((args_no==1) ? NULL : args[1]);
+				goto end;
+			}
 
 			// create child to exec command
 			int pid = fork();
