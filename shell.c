@@ -35,21 +35,32 @@ char* get_text(char input[], int input_length, int *in){
 	return ret;
 }
 
-void cd(char* path){
+int cd(char* path){
 	// cd `dir` defaults to $HOME
 	if(path == NULL){
 		if((path = getenv("HOME")) == NULL){
-			path = getpwuid(getuid()) -> pw_dir;
+			struct passwd *p = getpwuid(getuid());
+			if(p == NULL){
+				perror("ERROR ");
+				return -1;
+			}
+			path = p -> pw_dir;
 		}
 	}
 
 	// change working directory
-	chdir(path);
+	int ret_code = chdir(path);
+	if(ret_code == -1){
+		perror("ERROR ");
+		return -1;
+	}
 
 	// change $PWD
 	char *new_p = getcwd(NULL,0);
 	setenv("PWD", new_p, 1);
 	free(new_p);
+
+	return 0;
 }
 
 int main (void){
@@ -223,7 +234,7 @@ int main (void){
 					write(2, "ERROR, culprit = `cd` has atmost one argument.\n", 47);
 					ERROR;
 				}
-				cd((args_no==1) ? NULL : args[1]);
+				if(cd((args_no==1) ? NULL : args[1]) == -1) ERROR;
 				goto end;
 			}
 
