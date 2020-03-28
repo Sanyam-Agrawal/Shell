@@ -17,20 +17,55 @@
 
 char* get_text(char input[], int input_length, int *in){
 	// find length of text
-	int text_length = 0;
-	while(*in+text_length < input_length && !sep(input[*in+text_length])) ++text_length;
+	int text_length = 0, end_ptr = *in;
+	int quotes_flag = 0;
+	while(end_ptr < input_length){
+		// end of text
+		if(!quotes_flag && sep(input[end_ptr])) break;
+
+		// handling quotes
+		if(input[end_ptr] == '\"') quotes_flag = 1 - quotes_flag;
+		// handling escapes
+		else if(input[end_ptr] == '\\'){
+			// nothing after '''\'''
+			if(end_ptr+1 == input_length){
+				write(2, "ERROR: Nothing after \\\n", 23);
+				return NULL;
+			}
+			++text_length;
+			++end_ptr;
+		}
+		// normal text
+		else{
+			++text_length;
+		}
+
+		++end_ptr;
+	}
+
+	// a opening " without closing
+	if(quotes_flag){
+		write(2, "ERROR: Missing closing \"\n", 25);
+		return NULL;
+	}
 
 	// allocate buffer
 	char* ret = malloc(sizeof(char) * (text_length+1));
 	if(ret == NULL){
 		// malloc failed
-		perror("FATAL ERROR : ");
+		perror("FATAL ERROR ");
 		exit(EXIT_FAILURE);
 	}
 
 	// copy text into buffer
-	for(int c=0; c<text_length; ++c) ret[c] = input[(*in)++];
-	ret[text_length] = '\0';
+	int ptr_buf = 0;
+	while(*in < end_ptr){
+		if(input[*in] == '\"'){ ++(*in); continue; }        // ", go ahead
+		if(input[*in] == '\\') ++(*in);                     // '''\''', take next
+		if(*in >= end_ptr || ptr_buf >= text_length) break; // length exceeded, break
+		ret[ptr_buf++] = input[(*in)++];                    // copy into buf
+	}
+	ret[ptr_buf] = '\0';
 
 	return ret;
 }
@@ -76,14 +111,23 @@ int main (void){
 		input_length = read(0, input, MAX_INPUT_SIZE) - 1;
 		int in = 0;
 
+		// EOF
+		if(input_length == -1) exit(EXIT_SUCCESS);
+
 		// boolean, whether command contains error
 		int error_flag = 0;
 
 		// Counting no of pipes in input command
 		int npipes = 0;
-		for(int i=0; i<input_length; ++i)
-			if (input[i] == '|')
-				++npipes;
+		{
+			int quotes_flag = 0, backslash_flag = 0;
+			for(int i=0; i<input_length; ++i){
+				if (backslash_flag)        backslash_flag = 0;
+				else if (input[i] == '\"') quotes_flag = 1 - quotes_flag;
+				else if (input[i] == '\\') backslash_flag = 1;
+				else if (!quotes_flag && input[i] == '|')  ++npipes;
+			}
+		}
 
 		// Creating pipes for each piping
 		int fd[npipes ? npipes : 1][2];
@@ -103,6 +147,7 @@ int main (void){
 					break;
 				}
 
+				// whitespace
 				if (isspace(input[in])){
 					++in;
 					continue;
@@ -138,10 +183,14 @@ int main (void){
 								ERROR;
 							}
 
-							// get file descriptor
+							// get filename
 							char* outfile = get_text(input, input_length, &in);
+							if(outfile == NULL) ERROR;
+
 							if(stderr_flag){
+								// if already redirected, close previous
 								if(errfd>2 && errfd!=outfd) close(errfd);
+								// get file descriptor
 								errfd = open(outfile, O_WRONLY | O_CREAT | (append_flag ? O_APPEND : O_TRUNC), 0644);
 								if(errfd<0){
 									// file error
@@ -151,7 +200,9 @@ int main (void){
 								}
 							}
 							else{
+								// if already redirected, close previous
 								if(outfd>2 && outfd!=errfd) close(outfd);
+								// get file descriptor
 								outfd = open(outfile, O_WRONLY | O_CREAT | (append_flag ? O_APPEND : O_TRUNC), 0644);
 								if(outfd<0){
 									// file error
@@ -176,9 +227,14 @@ int main (void){
 								ERROR;
 							}
 
-							// get file descriptor
+							// get filename
 							char* infile = get_text(input, input_length, &in);
+							if(infile == NULL) ERROR;
+
+							// if already redirected, close previous
 							if(infd>2) close(infd);
+
+							// get file descriptor
 							infd = open(infile, O_RDONLY);
 							if(infd<0){
 								// file error
@@ -203,6 +259,7 @@ int main (void){
 						// command not yet parsed
 						if(args[0] == NULL){
 							args[0] = get_text(input, input_length, &in);
+							if(args[0] == NULL) ERROR;
 						}
 						// must be an argument
 						else{
@@ -212,6 +269,7 @@ int main (void){
 								ERROR;
 							}
 							args[args_no++] = get_text(input, input_length, &in);
+							if(args[args_no-1] == NULL) ERROR;
 						}
 					}
 				}
@@ -229,6 +287,7 @@ int main (void){
 			// `exit`
 			if(! strcmp(args[0], "exit")) exit(EXIT_SUCCESS);
 
+			// `cd`
 			if(! strcmp(args[0], "cd")){
 				if(args_no>2){
 					write(2, "ERROR, culprit = `cd` has atmost one argument.\n", 47);
