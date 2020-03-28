@@ -165,98 +165,102 @@ void execute_command(char* input, int input_length){
 
 			switch(input[in]){
 				case '>':
-					{
-						// distinguish stdout and stderr
-						int stderr_flag = 0;
-						if(0<in && input[in-1]=='2' && (in<2 || isspace(input[in-2]) || input[in-2]=='|'))
-							stderr_flag = 1;
+				{
+					// distinguish stdout and stderr
+					int stderr_flag = 0;
+					if(0<in && input[in-1]=='2' && (in<2 || isspace(input[in-2]) || input[in-2]=='|'))
+						stderr_flag = 1;
 
-						// distinguish > and >>
-						int append_flag = 0;
-						if(in+1<input_length && input[in+1]=='>') append_flag = 1;
+					// distinguish > and >>
+					int append_flag = 0;
+					if(in+1<input_length && input[in+1]=='>') append_flag = 1;
 
-						// increase pointer to input accordingly
-						in += 1+append_flag;
+					// increase pointer to input accordingly
+					in += 1+append_flag;
 
-						// check for 2>&1
-						if(stderr_flag && in+1<input_length && input[in]=='&' && input[in+1]=='1'){
-							in += 2;
-							errfd = outfd;
-							break;
-						}
-
-						// remove whitespace
-						while(in<input_length && isspace(input[in])) ++in;
-
-						// filename missing
-						if(in+1>=input_length || sep(input[in]))
-							WERROR("ERROR: Filename missing after >\n");
-
-						// get filename
-						char* outfile = get_text(input, input_length, &in);
-						if(outfile == NULL) ERROR;
-
-						if(stderr_flag){
-							// if already redirected, close previous
-							if(errfd>2 && errfd!=outfd && close(errfd) < 0) PERROR;
-							// get file descriptor
-							if((errfd = open(outfile, O_WRONLY | O_CREAT | (append_flag ? O_APPEND : O_TRUNC), 0644)) < 0){
-								// file error
-								PERROR_SHIM("ERROR, culprit = STDERR Redirection ");
-								free(outfile);
-								ERROR;
-							}
-						}
-						else{
-							// if already redirected, close previous
-							if(outfd>2 && outfd!=errfd && close(outfd) < 0) PERROR;
-							// get file descriptor
-							if((outfd = open(outfile, O_WRONLY | O_CREAT | (append_flag ? O_APPEND : O_TRUNC), 0644)) < 0){
-								// file error
-								PERROR_SHIM("ERROR, culprit = STDOUT Redirection ");
-								free(outfile);
-								ERROR;
-							}
-						}
-						free(outfile);
+					// check for 2>&1
+					if(stderr_flag && in+1<input_length && input[in]=='&' && input[in+1]=='1'){
+						in += 2;
+						errfd = outfd;
+						break;
 					}
-					break;
 
-				case '<':
-					{
-						// take pointer to start of filename
-						++in;
-						while(in<input_length && isspace(input[in])) ++in;
+					// remove whitespace
+					while(in<input_length && isspace(input[in])) ++in;
 
-						// filename missing
-						if(in+1>=input_length || sep(input[in]))
-							WERROR("ERROR: Filename missing after <\n");
+					// filename missing
+					if(in+1>=input_length || sep(input[in]))
+						WERROR("ERROR: Filename missing after >\n");
 
-						// get filename
-						char* infile = get_text(input, input_length, &in);
-						if(infile == NULL) ERROR;
+					// get filename
+					char* outfile = get_text(input, input_length, &in);
+					if(outfile == NULL) ERROR;
 
+					if(stderr_flag){
 						// if already redirected, close previous
-						if(infd>2 && close(infd) < 0) PERROR;
-
+						if(errfd>2 && errfd!=outfd && close(errfd) < 0) PERROR;
 						// get file descriptor
-						if((infd = open(infile, O_RDONLY)) < 0){
+						if((errfd = open(outfile, O_WRONLY | O_CREAT |
+						                 (append_flag ? O_APPEND : O_TRUNC), 0644)) < 0)
+						{
 							// file error
-							PERROR_SHIM("ERROR, culprit = STDIN Redirection ");
-							free(infile);
+							PERROR_SHIM("ERROR, culprit = STDERR Redirection ");
+							free(outfile);
 							ERROR;
 						}
-						free(infile);
 					}
-					break;
+					else{
+						// if already redirected, close previous
+						if(outfd>2 && outfd!=errfd && close(outfd) < 0) PERROR;
+						// get file descriptor
+						if((outfd = open(outfile, O_WRONLY | O_CREAT |
+						                 (append_flag ? O_APPEND : O_TRUNC), 0644)) < 0)
+						{
+							// file error
+							PERROR_SHIM("ERROR, culprit = STDOUT Redirection ");
+							free(outfile);
+							ERROR;
+						}
+					}
+					free(outfile);
+				}
+				break;
+
+				case '<':
+				{
+					// take pointer to start of filename
+					++in;
+					while(in<input_length && isspace(input[in])) ++in;
+
+					// filename missing
+					if(in+1>=input_length || sep(input[in]))
+						WERROR("ERROR: Filename missing after <\n");
+
+					// get filename
+					char* infile = get_text(input, input_length, &in);
+					if(infile == NULL) ERROR;
+
+					// if already redirected, close previous
+					if(infd>2 && close(infd) < 0) PERROR;
+
+					// get file descriptor
+					if((infd = open(infile, O_RDONLY)) < 0){
+						// file error
+						PERROR_SHIM("ERROR, culprit = STDIN Redirection ");
+						free(infile);
+						ERROR;
+					}
+					free(infile);
+				}
+				break;
 
 				case '1':
 				case '2':
-						// check if this is for redirection
-						if(in+1<input_length && input[in+1]=='>'){
-							++in;
-							break;
-						}
+					// check if this is for redirection
+					if(in+1<input_length && input[in+1]=='>'){
+						++in;
+						break;
+					}
 
 				default:
 				{
@@ -377,7 +381,11 @@ int main (void){
 		write(1, welcome_msg, strlen(welcome_msg));
 
 		// Getting input from user
-		if((input_length = read(0, input, MAX_INPUT_SIZE)) < 0) { PERROR_SHIM("ERROR "); continue; }
+		if((input_length = read(0, input, MAX_INPUT_SIZE)) < 0){
+			PERROR_SHIM("ERROR ");
+			continue;
+		}
+
 		// EOF
 		if(input_length == 0) quit();
 		// '\n' is not part of command, so if present, strip it
