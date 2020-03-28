@@ -13,7 +13,10 @@
 #define MAX_ARGS       1000
 
 #define sep(x) (isspace(x) || (x)=='<' || (x)=='>' || (x)=='|')
-#define ERROR  { error_flag = 1; goto end; }
+
+#define ERROR     do { error_flag = 1;   goto end;           } while(0)
+#define WERROR    do { perror("ERROR "); ERROR;              } while(0)
+#define EXITERROR do { perror("ERROR "); exit(EXIT_FAILURE); } while(0)
 
 char* get_text(char input[], int input_length, int *in){
 	// find length of text
@@ -51,11 +54,7 @@ char* get_text(char input[], int input_length, int *in){
 
 	// allocate buffer
 	char* ret = malloc(sizeof(char) * (text_length+1));
-	if(ret == NULL){
-		// malloc failed
-		perror("FATAL ERROR ");
-		exit(EXIT_FAILURE);
-	}
+	if(ret == NULL) EXITERROR;
 
 	// copy text into buffer
 	int ptr_buf = 0;
@@ -84,18 +83,22 @@ int cd(char* path){
 	}
 
 	// change working directory
-	int ret_code = chdir(path);
-	if(ret_code == -1){
+	if(chdir(path) < 0){
 		perror("ERROR ");
 		return -1;
 	}
 
+	int retvalue = 0;
+
 	// change $PWD
 	char *new_p = getcwd(NULL,0);
-	setenv("PWD", new_p, 1);
+	if(new_p == NULL || setenv("PWD", new_p, 1) < 0){
+		perror("ERROR ");
+		retvalue = -1;
+	}
 	free(new_p);
 
-	return 0;
+	return retvalue;
 }
 
 int main (void){
@@ -108,11 +111,10 @@ int main (void){
 	while(1){
 		// Getting input from user
 		write(1, "$ ", 2);
-		input_length = read(0, input, MAX_INPUT_SIZE) - 1;
+		if((input_length = read(0, input, MAX_INPUT_SIZE)) < 0) { perror("ERROR "); continue; }
+		/* EOF */ if(input_length == 0) exit(EXIT_SUCCESS);
+		if(input[input_length-1] == '\n') --input_length; // '\n' is not part of command
 		int in = 0;
-
-		// EOF
-		if(input_length == -1) exit(EXIT_SUCCESS);
 
 		// boolean, whether command contains error
 		int error_flag = 0;
@@ -131,7 +133,7 @@ int main (void){
 
 		// Creating pipes for each piping
 		int fd[npipes ? npipes : 1][2];
-		for(int p=0; p<npipes; ++p) pipe(fd[p]);
+		for(int p=0; p<npipes; ++p) if(pipe(fd[p]) < 0) EXITERROR;
 
 		for(int p=0; p<=npipes; ++p){
 			// set-up
@@ -189,10 +191,9 @@ int main (void){
 
 							if(stderr_flag){
 								// if already redirected, close previous
-								if(errfd>2 && errfd!=outfd) close(errfd);
+								if(errfd>2 && errfd!=outfd && close(errfd) < 0) WERROR;
 								// get file descriptor
-								errfd = open(outfile, O_WRONLY | O_CREAT | (append_flag ? O_APPEND : O_TRUNC), 0644);
-								if(errfd<0){
+								if((errfd = open(outfile, O_WRONLY | O_CREAT | (append_flag ? O_APPEND : O_TRUNC), 0644)) < 0){
 									// file error
 									perror("ERROR, culprit = STDERR Redirection ");
 									free(outfile);
@@ -201,10 +202,9 @@ int main (void){
 							}
 							else{
 								// if already redirected, close previous
-								if(outfd>2 && outfd!=errfd) close(outfd);
+								if(outfd>2 && outfd!=errfd && close(outfd) < 0) WERROR;
 								// get file descriptor
-								outfd = open(outfile, O_WRONLY | O_CREAT | (append_flag ? O_APPEND : O_TRUNC), 0644);
-								if(outfd<0){
+								if((outfd = open(outfile, O_WRONLY | O_CREAT | (append_flag ? O_APPEND : O_TRUNC), 0644)) < 0){
 									// file error
 									perror("ERROR, culprit = STDOUT Redirection ");
 									free(outfile);
@@ -232,11 +232,10 @@ int main (void){
 							if(infile == NULL) ERROR;
 
 							// if already redirected, close previous
-							if(infd>2) close(infd);
+							if(infd>2 && close(infd) < 0) WERROR;
 
 							// get file descriptor
-							infd = open(infile, O_RDONLY);
-							if(infd<0){
+							if((infd = open(infile, O_RDONLY)) < 0){
 								// file error
 								perror("ERROR, culprit = STDIN Redirection ");
 								free(infile);
@@ -258,8 +257,7 @@ int main (void){
 					{
 						// command not yet parsed
 						if(args[0] == NULL){
-							args[0] = get_text(input, input_length, &in);
-							if(args[0] == NULL) ERROR;
+							if((args[0] = get_text(input, input_length, &in)) == NULL) ERROR;
 						}
 						// must be an argument
 						else{
@@ -268,18 +266,14 @@ int main (void){
 								write(2, "ERROR, culprit = Too Many Args\n", 31);
 								ERROR;
 							}
-							args[args_no++] = get_text(input, input_length, &in);
-							if(args[args_no-1] == NULL) ERROR;
+							if((args[args_no++] = get_text(input, input_length, &in)) == NULL) ERROR;
 						}
 					}
 				}
 			}
 
 			// if no command is given, then give an empty string
-			if(args[0] == NULL){
-				args[0] = malloc(sizeof(char));
-				args[0][0] = '\0';
-			}
+			if(args[0] == NULL) args[0] = calloc(1, sizeof(char));
 
 			// execvp requires NULL-terminated arrays
 			args[args_no] = NULL;
@@ -307,10 +301,10 @@ int main (void){
 				wait(NULL);
 
 				// close reading end of previous pipe, as cleanup
-				if(p != 0) close(fd[p-1][0]);
+				if(p != 0 && close(fd[p-1][0]) < 0) WERROR;
 
 				// close writing end of pipe to enable EOF
-				if(p != npipes) close(fd[p][1]);
+				if(p != npipes && close(fd[p][1]) < 0) WERROR;
 			}
 
 			else if (pid == 0){
@@ -318,38 +312,38 @@ int main (void){
 
 				if(infd>2){
 					// STDIN redirected
-					close(0);
-					dup(infd);
-					close(infd);
+					if(close(0) < 0) EXITERROR;
+					if(dup(infd) < 0) EXITERROR;
+					if(close(infd) < 0) EXITERROR;
 				}
 				else if(p != 0){
 					// STDIN takes from previous pipe
-					close(0);
-					dup(fd[p-1][0]);
-					close(fd[p-1][0]);
+					if(close(0) < 0) EXITERROR;
+					if(dup(fd[p-1][0]) < 0) EXITERROR;
+					if(close(fd[p-1][0]) < 0) EXITERROR;
 				}
 
 				if(outfd>2){
 					// STDOUT redirected
-					close(1);
-					dup(outfd);
+					if(close(1) < 0) EXITERROR;
+					if(dup(outfd) < 0) EXITERROR;
 					// maybe Stderr is redirected to the same place
 					//       so only close if not 
-					if(outfd != errfd) close(outfd);
+					if(outfd != errfd && close(outfd) < 0) EXITERROR;
 				}
 				else if(p != npipes){
 					// STDOUT gives to next pipe
-					close(fd[p][0]);
-					close(1);
-					dup(fd[p][1]);
-					close(fd[p][1]);
+					if(close(fd[p][0]) < 0) EXITERROR;
+					if(close(1) < 0) EXITERROR;
+					if(dup(fd[p][1]) < 0) EXITERROR;
+					if(close(fd[p][1]) < 0) EXITERROR;
 				}
 
 				if(errfd>2){
 					// STDERR redirected
-					close(2);
-					dup(errfd);
-					close(errfd);
+					if(close(2) < 0) EXITERROR;
+					if(dup(errfd) < 0) EXITERROR;
+					if(close(errfd) < 0) EXITERROR;
 				}
 
 				// empty command, so nothing to execute
@@ -359,15 +353,12 @@ int main (void){
 				execvp(args[0],args);
 
 				// exec failed
-				perror("ERROR ");
-				error_flag = 1;
-				exit(EXIT_FAILURE);
+				EXITERROR;
 			}
 
 			else{
 				// fork failed
-				perror("ERROR ");
-				ERROR;
+				WERROR;
 			}
 
 			end:
