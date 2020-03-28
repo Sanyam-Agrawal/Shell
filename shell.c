@@ -14,9 +14,20 @@
 
 #define sep(x) (isspace(x) || (x)=='<' || (x)=='>' || (x)=='|')
 
-#define ERROR     do { error_flag = 1;   goto end;           } while(0)
-#define WERROR    do { perror("ERROR "); ERROR;              } while(0)
-#define EXITERROR do { perror("ERROR "); exit(EXIT_FAILURE); } while(0)
+#define ANSI_COLOR_RED     "\x1b[31m"
+#define ANSI_COLOR_GREEN   "\x1b[32m"
+#define ANSI_COLOR_BLUE    "\x1b[34m"
+#define ANSI_COLOR_RESET   "\x1b[0m"
+
+#define START_ERR      write(2, ANSI_COLOR_RED,   strlen(ANSI_COLOR_RED)  );
+#define STOP_ERR       write(2, ANSI_COLOR_RESET, strlen(ANSI_COLOR_RESET));
+#define WRITE_ERROR(x) do { START_ERR; write(2, x, strlen(x)); STOP_ERR; } while(0)
+#define PERROR_SHIM(x) do { START_ERR; perror(x);              STOP_ERR; } while(0)
+
+#define ERROR          do { error_flag = 1; goto end; } while(0)
+#define WERROR(x)      do { WRITE_ERROR(x); ERROR; } while(0)
+#define PERROR         do { PERROR_SHIM("ERROR "); ERROR; } while(0)
+#define EXITERROR      do { PERROR_SHIM("ERROR "); exit(EXIT_FAILURE); } while(0)
 
 char* get_text(char input[], int input_length, int *in){
 	// find length of text
@@ -32,7 +43,7 @@ char* get_text(char input[], int input_length, int *in){
 		else if(input[end_ptr] == '\\'){
 			// nothing after '''\'''
 			if(end_ptr+1 == input_length){
-				write(2, "ERROR: Nothing after \\\n", 23);
+				WRITE_ERROR("ERROR: Nothing after \\\n");
 				return NULL;
 			}
 			++text_length;
@@ -48,7 +59,7 @@ char* get_text(char input[], int input_length, int *in){
 
 	// a opening " without closing
 	if(quotes_flag){
-		write(2, "ERROR: Missing closing \"\n", 25);
+		WRITE_ERROR("ERROR: Missing closing \"\n");
 		return NULL;
 	}
 
@@ -75,7 +86,7 @@ int cd(char* path){
 		if((path = getenv("HOME")) == NULL){
 			struct passwd *p = getpwuid(getuid());
 			if(p == NULL){
-				perror("ERROR ");
+				PERROR_SHIM("ERROR ");
 				return -1;
 			}
 			path = p -> pw_dir;
@@ -84,7 +95,7 @@ int cd(char* path){
 
 	// change working directory
 	if(chdir(path) < 0){
-		perror("ERROR ");
+		PERROR_SHIM("ERROR ");
 		return -1;
 	}
 
@@ -93,12 +104,18 @@ int cd(char* path){
 	// change $PWD
 	char *new_p = getcwd(NULL,0);
 	if(new_p == NULL || setenv("PWD", new_p, 1) < 0){
-		perror("ERROR ");
+		PERROR_SHIM("ERROR ");
 		retvalue = -1;
 	}
 	free(new_p);
 
 	return retvalue;
+}
+
+void quit(){
+	char* exit_msg = ANSI_COLOR_BLUE "\nKTHNXBYE\n" ANSI_COLOR_RESET;
+	write(1, exit_msg, strlen(exit_msg));
+	exit(EXIT_SUCCESS);
 }
 
 int main (void){
@@ -110,9 +127,10 @@ int main (void){
 
 	while(1){
 		// Getting input from user
-		write(1, "$ ", 2);
-		if((input_length = read(0, input, MAX_INPUT_SIZE)) < 0) { perror("ERROR "); continue; }
-		/* EOF */ if(input_length == 0) exit(EXIT_SUCCESS);
+		char* welcome_msg = ANSI_COLOR_GREEN "$ " ANSI_COLOR_RESET;
+		write(1, welcome_msg, strlen(welcome_msg));
+		if((input_length = read(0, input, MAX_INPUT_SIZE)) < 0) { PERROR_SHIM("ERROR "); continue; }
+		/* EOF */ if(input_length == 0) quit();
 		if(input[input_length-1] == '\n') --input_length; // '\n' is not part of command
 		int in = 0;
 
@@ -180,10 +198,7 @@ int main (void){
 							while(in<input_length && isspace(input[in])) ++in;
 
 							// filename missing
-							if(in+1>=input_length || sep(input[in])){
-								write(2, "ERROR: Filename missing after >\n", 32);
-								ERROR;
-							}
+							if(in+1>=input_length || sep(input[in])) WERROR("ERROR: Filename missing after >\n");
 
 							// get filename
 							char* outfile = get_text(input, input_length, &in);
@@ -191,22 +206,22 @@ int main (void){
 
 							if(stderr_flag){
 								// if already redirected, close previous
-								if(errfd>2 && errfd!=outfd && close(errfd) < 0) WERROR;
+								if(errfd>2 && errfd!=outfd && close(errfd) < 0) PERROR;
 								// get file descriptor
 								if((errfd = open(outfile, O_WRONLY | O_CREAT | (append_flag ? O_APPEND : O_TRUNC), 0644)) < 0){
 									// file error
-									perror("ERROR, culprit = STDERR Redirection ");
+									PERROR_SHIM("ERROR, culprit = STDERR Redirection ");
 									free(outfile);
 									ERROR;
 								}
 							}
 							else{
 								// if already redirected, close previous
-								if(outfd>2 && outfd!=errfd && close(outfd) < 0) WERROR;
+								if(outfd>2 && outfd!=errfd && close(outfd) < 0) PERROR;
 								// get file descriptor
 								if((outfd = open(outfile, O_WRONLY | O_CREAT | (append_flag ? O_APPEND : O_TRUNC), 0644)) < 0){
 									// file error
-									perror("ERROR, culprit = STDOUT Redirection ");
+									PERROR_SHIM("ERROR, culprit = STDOUT Redirection ");
 									free(outfile);
 									ERROR;
 								}
@@ -222,22 +237,19 @@ int main (void){
 							while(in<input_length && isspace(input[in])) ++in;
 
 							// filename missing
-							if(in+1>=input_length || sep(input[in])){
-								write(2, "ERROR: Filename missing after <\n", 32);
-								ERROR;
-							}
+							if(in+1>=input_length || sep(input[in])) WERROR("ERROR: Filename missing after <\n");
 
 							// get filename
 							char* infile = get_text(input, input_length, &in);
 							if(infile == NULL) ERROR;
 
 							// if already redirected, close previous
-							if(infd>2 && close(infd) < 0) WERROR;
+							if(infd>2 && close(infd) < 0) PERROR;
 
 							// get file descriptor
 							if((infd = open(infile, O_RDONLY)) < 0){
 								// file error
-								perror("ERROR, culprit = STDIN Redirection ");
+								PERROR_SHIM("ERROR, culprit = STDIN Redirection ");
 								free(infile);
 								ERROR;
 							}
@@ -261,11 +273,7 @@ int main (void){
 						}
 						// must be an argument
 						else{
-							if(args_no == MAX_ARGS){
-								// this many args cannot fit in our buffer
-								write(2, "ERROR, culprit = Too Many Args\n", 31);
-								ERROR;
-							}
+							if(args_no == MAX_ARGS) WERROR("ERROR, culprit = Too Many Args\n");
 							if((args[args_no++] = get_text(input, input_length, &in)) == NULL) ERROR;
 						}
 					}
@@ -279,14 +287,11 @@ int main (void){
 			args[args_no] = NULL;
 
 			// `exit`
-			if(! strcmp(args[0], "exit")) exit(EXIT_SUCCESS);
+			if(! strcmp(args[0], "exit")) quit();
 
 			// `cd`
 			if(! strcmp(args[0], "cd")){
-				if(args_no>2){
-					write(2, "ERROR, culprit = `cd` has atmost one argument.\n", 47);
-					ERROR;
-				}
+				if(args_no>2) WERROR("ERROR, culprit = `cd` has atmost one argument.\n");
 				if(cd((args_no==1) ? NULL : args[1]) == -1) ERROR;
 				goto end;
 			}
@@ -301,10 +306,10 @@ int main (void){
 				wait(NULL);
 
 				// close reading end of previous pipe, as cleanup
-				if(p != 0 && close(fd[p-1][0]) < 0) WERROR;
+				if(p != 0 && close(fd[p-1][0]) < 0) PERROR;
 
 				// close writing end of pipe to enable EOF
-				if(p != npipes && close(fd[p][1]) < 0) WERROR;
+				if(p != npipes && close(fd[p][1]) < 0) PERROR;
 			}
 
 			else if (pid == 0){
@@ -358,7 +363,7 @@ int main (void){
 
 			else{
 				// fork failed
-				WERROR;
+				PERROR;
 			}
 
 			end:
